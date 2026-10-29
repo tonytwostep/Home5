@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
@@ -157,10 +158,28 @@ static void load_ca_directory(const char *path)
         note("H5 net roots directory=%s unreadable", path);
         return;
     }
-    char entries[8192];
+    struct stat info;
+    if (fstat(fd, &info) || !S_ISDIR(info.st_mode)) {
+        note("H5 net roots directory=%s unreadable", path);
+        close(fd);
+        return;
+    }
+    size_t entries_size = info.st_blksize > 0 ? (size_t)info.st_blksize : 8192;
+    if (entries_size < 8192) entries_size = 8192;
+    if (entries_size > 1024 * 1024) {
+        note("H5 net roots directory=%s block size too large", path);
+        close(fd);
+        return;
+    }
+    char *entries = h5_alloc(entries_size);
+    if (!entries) {
+        note("H5 net roots directory=%s out of memory", path);
+        close(fd);
+        return;
+    }
     long base = 0;
     ssize_t got;
-    while ((got = getdirentries(fd, entries, (int)sizeof(entries), &base)) > 0) {
+    while ((got = getdirentries(fd, entries, (int)entries_size, &base)) > 0) {
         for (size_t offset = 0; offset < (size_t)got;) {
             const struct dirent *entry = (const struct dirent *)(entries + offset);
             size_t record = entry->d_reclen;
@@ -170,6 +189,7 @@ static void load_ca_directory(const char *path)
         }
     }
     if (got < 0) note("H5 net roots directory=%s read failed", path);
+    h5_free(entries);
     close(fd);
 #endif
 }
